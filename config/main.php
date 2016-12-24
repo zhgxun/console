@@ -21,5 +21,10 @@ return [
             ],
         ],
     ],
+    'modules' => [
+        'etl' => [
+            'class' => 'console\modules\etl\Module',
+        ],
+    ],
     'params' => $params,
 ];
