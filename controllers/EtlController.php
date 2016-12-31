@@ -1,4 +1,5 @@
 <?php
+
 /**
  * ETL基类
  */
@@ -45,7 +46,7 @@ abstract class EtlController extends Controller
      * @param string $command 类名
      * @param string $action 方法名
      */
-    public function actionKillTask($command, $action = '')
+    public function actionKill($command, $action = '')
     {
         $command = trim($command);
         $action = trim($action);
@@ -72,7 +73,7 @@ abstract class EtlController extends Controller
      * 打印系统中正在运行的进程
      * @param string $command 进程名
      */
-    public function actionPrintRunningTask($command = '')
+    public function actionPrint($command = '')
     {
         $command = trim($command);
         if (empty($command)) {
