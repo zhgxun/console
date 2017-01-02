@@ -24,6 +24,8 @@ class DefaultController extends CommandController
 
     public function actionTest()
     {
-        $this->addRun('default/test', ['from' => '2016-10-01', 'to' => '2016-11-01']);
+        $this->addRun('default/test', ['from' => '2016-10-01', 'to' => '2016-12-01']);
+        //$this->wait();
+        //$this->report();
     }
 }

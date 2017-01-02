@@ -1,5 +1,5 @@
 <?php
-declare(ticks = 1);
+declare(ticks=1);
 
 namespace console\controllers;
 
@@ -27,7 +27,7 @@ class CommandController extends Controller
     // 任务详情ID环境变量字段
     protected $tmTaskDetailIdField = 'tm_task_detail_id';
     // 唯一标识符
-    private static $uniqueId;
+    private static $currentUniqueId;
     // 保存当前工作列表
     protected $currentJobs;
     // 当前最后一个子进程命令信息
@@ -36,8 +36,10 @@ class CommandController extends Controller
     protected $outDir;
     // 任务队列
     protected $signalQueue;
-    protected $parentPid;
+    // 当前PHP进程ID
+    protected $myPid;
     protected $beginTime;
+    protected $endTime;
     protected $tmParentReportFile;
     protected $mailError;
     protected $mailOut;
@@ -48,49 +50,76 @@ class CommandController extends Controller
     public function init()
     {
         parent::init();
+
         umask(0);
 
         $this->beginTime = time();
-        $this->parentPid = getmygid();
+        // 获取当前PHP进程ID
+        $this->myPid = getmypid();
         $this->tmParentReportFile = getenv($this->tmParentReportFileField);
         $outDir = $this->getOutDir();
         // 清空目录下所有的文件
         array_map('unlink', glob($outDir . '/*'));
-
         $this->setScriptName('./yii');
-        $this->currentCmd = 'default/test';
+        $this->currentCmd = $this->getScriptName() . ' ' .$this->getParams()[0];
+        // 1 往总报告中写入当前机器 当前代码 当前代码分支等日志信息
         $this->initReport($this->currentCmd);
 
         if (!function_exists('pcntl_signal')) {
             error_log('pcntl_signal functions are not available.');
             return;
         }
-        pcntl_signal(SIGCHLD, [&$this, 'childSignalHandler']);
+        // SIGCHLD 子进程结束时, 父进程会收到这个信号
+        pcntl_signal(SIGCHLD, [&$this, 'childSignalHandler'], true);
     }
 
     /**
      * 记录一个标识符
      * @return mixed
      */
-    public static function makeId()
+    protected static function makeId()
     {
-        return ++self::$uniqueId;
+        return ++self::$currentUniqueId;
     }
 
     /**
      * 得到唯一标识
      * @return mixed
      */
-    public static function getId()
+    protected static function getId()
     {
-        return self::$uniqueId;
+        return self::$currentUniqueId;
+    }
+
+    /**
+     * 获取参数名称
+     * @return array
+     */
+    protected function getParams()
+    {
+        $rawParams = [];
+        if (isset($_SERVER['argv'])) {
+            $rawParams = $_SERVER['argv'];
+            array_shift($rawParams);
+        }
+
+        $params = [];
+        foreach ($rawParams as $param) {
+            if (preg_match('/^--(\w+)(=(.*))?$/', $param, $matches)) {
+                $name = $matches[1];
+                $params[$name] = isset($matches[3]) ? $matches[3] : true;
+            } else {
+                $params[] = $param;
+            }
+        }
+        return $params;
     }
 
     /**
      * 获得日志输出目录
      * @return string
      */
-    public function getOutDir()
+    protected function getOutDir()
     {
         if (!$this->outDir) {
             $outDir = null;
@@ -101,7 +130,7 @@ class CommandController extends Controller
             if (!$outDir || !is_dir($outDir)) {
                 $outDir = '/tmp';
             }
-            $this->outDir = $outDir . "/command_" . date("Ymd") . "_" . $this->parentPid;
+            $this->outDir = $outDir . "/command_" . date("Ymd") . "_" . $this->myPid;
             if (!is_dir($this->outDir) && !mkdir($this->outDir, 0777, true)) {
                 die('Failed to create folders...');
             }
@@ -125,7 +154,7 @@ class CommandController extends Controller
         $branch = exec("git branch");
         //$version = exec("git var -l | grep $branch | awk '{print $2}'");
         $version = exec("git branch -v");
-        file_put_contents($reportFile, sprintf("当前机器：%s    当前用户：%s    当前代码分支：%s@%s\ncurrentCmd:%s\n运行日志目录：%s\n\n", $ip, $whoami, $branch, $version, $currentCmd, $this->outDir));
+        file_put_contents($reportFile, sprintf("当前机器：%s    当前用户：%s    当前代码分支：%s@%s\n当前引导命令:%s\n运行日志目录：%s\n\n", $ip, $whoami, $branch, $version, $currentCmd, $this->outDir));
         $this->pushParentReport($reportFile);
     }
 
@@ -133,7 +162,7 @@ class CommandController extends Controller
      * 同时向父报告写入路径
      * @param $reportFilePath
      */
-    public function pushParentReport($reportFilePath)
+    protected function pushParentReport($reportFilePath)
     {
         if (!empty($this->tmParentReportFile)) {
             file_put_contents($this->tmParentReportFile, $reportFilePath);
@@ -148,14 +177,16 @@ class CommandController extends Controller
      * @return bool
      * @throws Exception
      */
-    public function childSignalHandler($signo, $pid = null, $status = null)
+    protected function childSignalHandler($signo = 0, $pid = null, $status = null)
     {
         if (!$pid) {
             // 返回退出的子进程进程号, 发生错误时返回-1, 如果提供了WNOHANG作为option(wait3可用的系统)并且没有可用子进程时返回0
             $pid = pcntl_waitpid(-1, $status, WNOHANG);
         }
         if ($pid == -1) {
-            throw new Exception("\nReturn the child process {$pid},\nMethod: " . __METHOD__ . "\nLine:" . __LINE__ . "\n");
+            $errorNo = pcntl_errno();
+            $errorStr = pcntl_strerror($errorNo);
+            throw new Exception("\nReturn the child process {$pid},\nError No: {$errorNo},\nError Message: {$errorStr},\nMethod: " . __METHOD__ . "\nLine:" . __LINE__ . "\n");
         }
 
         while ($pid > 0) {
@@ -184,9 +215,8 @@ class CommandController extends Controller
     {
         $title = $this->currentJobs[$pid]['cmd'];
         $id = $this->currentJobs[$pid]['id'];
-        $taskDetailId = $this->currentJobs[$pid]['task_detail_id'];
         $needMailOutFile = $this->currentJobs[$pid]['need_mail_out_file'];
-        list($outFile, $errorFile, $statusFile, $parentReportFile) = $this->getOutFiles($pid, $id);
+        list($outFile, $errorFile, $statusFile, $reportFile) = $this->getOutFiles($pid, $id);
         if (15 == $exitCode || 143 == $exitCode) {
             $tailMessage = "\n\n$pid : 当前进程是被kill掉的\n";
             $tailMessage .= "--------------tail out-------------\n";
@@ -230,7 +260,7 @@ class CommandController extends Controller
             \common\mail\Admin::getInstance()->send('layouts/text', ['content' => $message], '978771018@qq.com', [], $attachments, '邮件');
         }
 
-        if (empty($this->tmParentReportFile)) {
+        if (!empty($this->tmParentReportFile)) {
             $reportMessage = $this->getFileContent(getenv($this->tmTaskTotalReportField));
             \common\models\task\Tasks::updateAll([
                 'task_status' => 'over',
@@ -278,18 +308,18 @@ class CommandController extends Controller
      */
     public function addSyncRun($commandName, $params = [], $preJobs = [], $needMailOutFile = false)
     {
-        $options = array('async' => false, 'need_mail_out_file' => $needMailOutFile);
+        $options = ['async' => false, 'need_mail_out_file' => $needMailOutFile];
         $this->addRun($commandName, $params, $preJobs, $options);
         $this->wait();
     }
 
     /**
      * 添加待执行异步命令
-     *
      * @param $commandName
      * @param array $params
      * @param array $preJobs
      * @param array $options
+     * @return bool
      * @throws Exception
      */
     public function addRun($commandName, $params = [], $preJobs = [], $options = [])
@@ -339,6 +369,12 @@ class CommandController extends Controller
         // 生成一个唯一标识符
         $id = self::makeId();
 
+        // FORK编程的大概原理是，每次调用fork函数，操作系统就会产生一个子进程，儿子进程所有的堆栈信息都是原封不动复制父进程的，
+        // 而在fork之后，父进程与子进程实际上是相互独立的，父子进程不会相互影响。也就是说，fork调用位置之前的所有变量，
+        // 父进程和子进程是一样的，但fork之后则取决于各自的动作，且数据也是独立的；因为数据已经完整的复制给了子进程。而唯一能
+        // 够区分父子进程的方法就是判断fork的返回值。如果为0，表示是子进程，如果为正数，表示为父进程，且该正数为子进程的PID
+        // （进程号），而如果是-1，表示子进程创建失败。
+
         // pcntl_fork — 在当前进程当前位置产生分支（子进程）
         // 译注：fork是创建了一个子进程，父进程和子进程都从fork的位置开始
         // 向下继续执行，不同的是父进程执行过程中，得到的fork返回值为子进程 号，而子进程得到的是0。
@@ -347,11 +383,11 @@ class CommandController extends Controller
         $pid = pcntl_fork();
         if ($pid == -1) {
             error_log('Could not launch new job, exiting');
-            exit(3);
+            return false;
         } else if ($pid) {
             // 父进程会得到子进程号，所以这里是父进程执行的逻辑
             // 将当前启动的进程工作信息保存到全局数组
-            $currentJobInfo = [
+            $this->currentJobs[$pid] = [
                 'cmd' => $cmd,
                 'command' => $commandName,
                 'params' => $params,
@@ -361,7 +397,6 @@ class CommandController extends Controller
                 'id' => $id,
                 'task_detail_id' => $taskDetailId
             ];
-            $this->currentJobs[$pid] = $currentJobInfo;
             if (!$async) {
                 $this->lastSyncPid = sprintf("%s_%s", $pid, $id);
             }
@@ -371,14 +406,13 @@ class CommandController extends Controller
                 $outFile   = $this->outDir . "/" . $pid . "_" . $id . "_out.txt";
                 $errorFile = $this->outDir . "/" . $pid . "_" . $id . "_error.txt";
                 // 任务日志和运行状态等信息更新
-                $tasksInfo = [
+                \common\models\task\Tasks::updateAll([
                     'out_file_path' => $outFile,
                     'error_file_path' => $errorFile,
                     'report_file_path' => getenv($this->tmTaskTotalReportField),
                     'task_status' => 'running',
                     'start_date' => date('YmdHis')
-                ];
-                \common\models\task\Tasks::updateAll($tasksInfo, ['id' => getenv($this->tmTaskIdField)]);
+                ], ['id' => getenv($this->tmTaskIdField)]);
             }
 
             if (isset($this->signalQueue[$pid])) {
@@ -396,16 +430,16 @@ class CommandController extends Controller
             // 等待同步执行脚本完成
             $this->waitPreJobs($preJobs);
 
-            list($outFile, $errorFile, $statusFile, $parentReportFile) = $this->getOutFiles(getmypid(), $id);
-            file_put_contents($outFile, sprintf("%s : %s\n", getmypid(), $cmd));
-            file_put_contents($errorFile, '');
-            file_put_contents($parentReportFile, '');
+            list($outFile, $errorFile, $statusFile, $reportFile) = $this->getOutFiles(getmypid(), $id);
+            $titleInfo = sprintf("%s : 启动 \"%s\"\n", getmypid(), $cmd);
+            file_put_contents($outFile, $titleInfo);
+            file_put_contents($errorFile, $titleInfo);
+            file_put_contents($reportFile, $titleInfo);
             file_put_contents($statusFile, date("Y-m-d H:i:s"));
-            $o = sprintf("%s : 启动 \"%s\"\n", getmypid(), $cmd);
             if (!empty($preJobs)) {
-                $o .= sprintf("%8s需要等待的任务有[%s]\n", '', implode(',', $preJobs));
+                $titleInfo .= sprintf("%8s需要等待的任务有[%s]\n", '', implode(',', $preJobs));
             }
-            $this->pushReport($o);
+            $this->pushReport($titleInfo);
 
             if (getenv($this->tmTaskIdField)) {
                 // 任务详情运行状态更新
@@ -417,7 +451,7 @@ class CommandController extends Controller
 
             // 设置任务详情ID和父报告文件环境变量
             putenv("{$this->tmTaskDetailIdField}=" . $taskDetailId);
-            putenv("{$this->tmParentReportFileField}=" . $parentReportFile);
+            //putenv("{$this->tmParentReportFileField}=" . $parentReportFile);
 
             $exitStatus = $this->runCmd($commandName, $params, $outFile, $errorFile);
             file_put_contents($outFile, "\nexitStatus:$exitStatus\n", FILE_APPEND);
@@ -426,7 +460,7 @@ class CommandController extends Controller
             if (getenv($this->tmTaskIdField)) {
                 $outMessage = $this->getFileContent($outFile);
                 $errorMessage = $this->getFileContent($errorFile);
-                $reportMessage = $this->getFileContent($parentReportFile);
+                $reportMessage = $this->getFileContent($reportFile);
                 $endDate = date("Y-m-d H:i:s");
                 \common\models\task\TaskDetail::updateAll([
                     'task_status' => 'over',
@@ -467,7 +501,7 @@ class CommandController extends Controller
      * 设置当前脚本名称
      * @param $scriptName
      */
-    public function setScriptName($scriptName)
+    protected function setScriptName($scriptName)
     {
         $this->scriptName = $scriptName;
     }
@@ -489,7 +523,7 @@ class CommandController extends Controller
      *
      * @return mixed
      */
-    public function getScriptName()
+    protected function getScriptName()
     {
         // 如果存在环境变量，需要注意入口控制台脚本文件名
         if (getenv($this->tmTaskDataYearField)) {
@@ -536,8 +570,8 @@ class CommandController extends Controller
         return [
             $this->outDir . "/{$pid}_{$id}_out.txt",
             $this->outDir . "/{$pid}_{$id}_error.txt",
-            $this->outDir . "/{$pid}_{$id}.status.txt",
-            $this->outDir . "/{$pid}_{$id}.report.txt",
+            $this->outDir . "/{$pid}_{$id}_status.txt",
+            $this->outDir . "/{$pid}_{$id}_report.txt",
         ];
     }
 
@@ -554,12 +588,12 @@ class CommandController extends Controller
     }
 
     /**
-     * 得到父报告日志文件路径
+     * 得到当前进程总报告日志文件路径
      * @return string
      */
     protected function getReportFile()
     {
-        return $this->outDir . "/{$this->parentPid}.report.txt";
+        return $this->outDir . "/{$this->myPid}_report.txt";
     }
 
     /**
@@ -585,7 +619,7 @@ class CommandController extends Controller
     protected function runCmd($commandName, $params = [], $outFile = null, $errorFile = null)
     {
         $cmd = sprintf("%s >>%s 2>>%s", $this->getCmd($commandName, $params), $outFile, $errorFile);
-        system($cmd, $returnValue);
+        $lastLine = system($cmd, $returnValue);
         return $returnValue;
     }
 
@@ -594,7 +628,7 @@ class CommandController extends Controller
      * @param $fileName
      * @return string
      */
-    protected function getFileContent($fileName)
+    public function getFileContent($fileName)
     {
         $message = '';
         if (shell_exec("wc $fileName | awk '{print $1}'") - 300 < 0) {
@@ -617,16 +651,27 @@ class CommandController extends Controller
         }
     }
 
-    public function actionTest()
+    /**
+     * 总报告附件
+     */
+    public function report()
     {
-//        putenv("{$this->tmTaskDataYearField}=2016");
-//        \common\base\Helper::echoLn($this->getScriptName());
-//        $params = [
-//            'from' => '2016-10-01',
-//            'to' => '2016-11-01',
-//        ];
-//        \common\base\Helper::echoLn($this->getCmd('default/test', $params));
-        $s = \common\mail\Admin::getInstance()->send('layouts/text', ['content' => '测试邮件'], '978771018@qq.com', [], '', '邮件标题');
-        var_export($s);
+        $this->wait();
+        $this->endTime = time();
+        $totalLeft = $this->getDiffTimeString($this->beginTime, $this->endTime);
+        $this->pushReport(sprintf("This runner begin %s end %s total left %20s\n", date("Y-m-d H:i:s", $this->beginTime), date("Y-m-d H:i:s", $this->endTime), $totalLeft));
+
+        $reportFile = $this->getReportFile();
+        $message = '';
+        $attachments = '';
+        if (shell_exec("wc $reportFile | awk '{print $1}'") - 17 < 0) {
+            $message = file_get_contents($reportFile);
+        } else {
+            $message .= shell_exec("head -n 3 $reportFile");
+            $message .= "\n\n...\n\n\n";
+            $message .= shell_exec("tail -n 3 $reportFile");
+            $attachments = $reportFile;
+        }
+        \common\mail\Admin::getInstance()->send('layouts/text', ['content' => $message], '978771018@qq.com', [], $attachments, '总报告附件');
     }
 }

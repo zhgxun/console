@@ -51,7 +51,7 @@ abstract class EtlController extends Controller
         $command = trim($command);
         $action = trim($action);
         $str = empty($action) ? '' : " | grep -i '$action'";
-        $command = "ps aux | grep yii | grep -i '$command' {$str} | grep -v grep | grep -iv KillTask | grep -v 'sh -c'";
+        $command = "ps aux | grep yii | grep -i '$command' {$str} | grep -v grep | grep -iv Kill | grep -v 'sh -c'";
         exec($command, $out, $status);
         if (0 === $status) {
             foreach ($out as $run) {
@@ -77,9 +77,9 @@ abstract class EtlController extends Controller
     {
         $command = trim($command);
         if (empty($command)) {
-            $command = "ps aux | grep yii | grep -v PrintRunningTask | grep -v grep";
+            $command = "ps aux | grep yii | grep -v Print | grep -v grep";
         } else {
-            $command = "ps aux | grep yii | grep -v PrintRunningTask | grep -i {$command} | grep -v grep";
+            $command = "ps aux | grep yii | grep -v Print | grep -i {$command} | grep -v grep";
         }
         exec($command, $out, $status);
         var_export($out);
