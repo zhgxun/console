@@ -43,15 +43,12 @@ abstract class EtlController extends Controller
 
     /**
      * kill当前正在运行的进程
-     * @param string $command 类名
-     * @param string $action 方法名
+     * @param string $command 请求脚本路径，比如 etl/default/test
      */
-    public function actionKill($command, $action = '')
+    public function actionKill($command)
     {
         $command = trim($command);
-        $action = trim($action);
-        $str = empty($action) ? '' : " | grep -i '$action'";
-        $command = "ps aux | grep yii | grep -i '$command' {$str} | grep -v grep | grep -iv Kill | grep -v 'sh -c'";
+        $command = "ps aux | grep yii | grep -i '$command' | grep -v grep | grep -iv Kill | grep -v 'sh -c'";
         exec($command, $out, $status);
         if (0 === $status) {
             foreach ($out as $run) {
@@ -76,7 +73,7 @@ abstract class EtlController extends Controller
     public function actionPrint($command = '')
     {
         $command = trim($command);
-        if (empty($command)) {
+        if (!$command) {
             $command = "ps aux | grep yii | grep -v Print | grep -v grep";
         } else {
             $command = "ps aux | grep yii | grep -v Print | grep -i {$command} | grep -v grep";

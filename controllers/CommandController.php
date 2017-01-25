@@ -1,5 +1,5 @@
 <?php
-declare(ticks=1);
+//declare(ticks=1);
 
 namespace console\controllers;
 
@@ -377,7 +377,7 @@ class CommandController extends Controller
 
         // pcntl_fork — 在当前进程当前位置产生分支（子进程）
         // 译注：fork是创建了一个子进程，父进程和子进程都从fork的位置开始
-        // 向下继续执行，不同的是父进程执行过程中，得到的fork返回值为子进程 号，而子进程得到的是0。
+        // 向下继续执行，不同的是父进程执行过程中，得到的fork返回值为子进程号，而子进程得到的是0。
 
         // 父进程和子进程都会执行下面代码
         $pid = pcntl_fork();
@@ -450,7 +450,7 @@ class CommandController extends Controller
             }
 
             // 设置任务详情ID和父报告文件环境变量
-            putenv("{$this->tmTaskDetailIdField}=" . $taskDetailId);
+            //putenv("{$this->tmTaskDetailIdField}=" . $taskDetailId);
             //putenv("{$this->tmParentReportFileField}=" . $parentReportFile);
 
             $exitStatus = $this->runCmd($commandName, $params, $outFile, $errorFile);
