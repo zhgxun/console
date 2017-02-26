@@ -2,6 +2,11 @@
 
 namespace console\controllers;
 
+/**
+ * 1. 批量导入符合格式的文件
+ * curl -XPOST 'localhost:9200/shakespeare/_bulk?pretty' --data-binary @shakespeare.json
+ * @package console\controllers
+ */
 class ElasticController extends \yii\console\Controller
 {
     /**
