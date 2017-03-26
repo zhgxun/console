@@ -4,7 +4,6 @@ namespace console\controllers;
 
 use yii\console\Controller;
 use yii\console\Exception;
-use Yii;
 use yii\helpers\Json;
 
 /**
@@ -30,7 +29,7 @@ class PlatformController extends Controller
      * 设置可执行文件名称，默认为框架入口脚本yii
      * @var null
      */
-    protected $execFile = 'yii';
+    protected $execFile = './yii';
 
     /**
      * 设置当前php进程总报告文件
@@ -39,7 +38,7 @@ class PlatformController extends Controller
     protected $myPidReportFile = null;
 
     /**
-     * 当前执行的命令名称
+     * 当前引导执行的命令名称
      * @var null
      */
     protected $currentCommand = null;
@@ -61,9 +60,6 @@ class PlatformController extends Controller
         // 输出目录
         $this->setOutputDirectory();
         array_map('unlink', glob($this->outputDirectory . '/*'));
-
-        // 设置命令引导脚本绝对路径
-        $this->setExecFile();
 
         // 设置当前运行的命令名称
         $this->setCurrentCommand();
@@ -98,21 +94,6 @@ class PlatformController extends Controller
             unset($_outputDirectory);
         }
         return $this->outputDirectory;
-    }
-
-    /**
-     * 设置引导脚本，拼接成绝对路径
-     *
-     * @throws Exception
-     */
-    protected function setExecFile()
-    {
-        if (!trim($this->execFile)) {
-            throw new Exception('empty bootstrap script');
-        }
-        $bathPath = trim(dirname(Yii::$app->getBasePath()), '/');
-        $this->execFile = '/' . $bathPath . '/' . trim($this->execFile);
-        unset($bathPath);
     }
 
     /**
@@ -197,6 +178,7 @@ class PlatformController extends Controller
     protected function runCmd($command, $outFile, $errorFile)
     {
         $cmd = sprintf("%s >>%s 2>>%s", $command, $outFile, $errorFile);
+        echo $cmd . PHP_EOL;
         $lastLine = system($cmd, $returnValue);
         return $returnValue;
     }
@@ -211,7 +193,7 @@ class PlatformController extends Controller
     public function addRun($commandName, $params = [])
     {
         $cmd = $this->getCmd($commandName, $params);
-        $process = new \swoole_process([$this, 'execute'], true);
+        $process = new \swoole_process([$this, 'execute'], false);
         if (($pid = $process->start()) === false) {
             throw new Exception(sprintf('ErrNo:%s, Error: %s', swoole_errno(), swoole_strerror(swoole_errno())));
         }
@@ -221,7 +203,7 @@ class PlatformController extends Controller
             'cmd' => $cmd,
             //'process' => $process
         ];
-        // Master写入当前工作信息
+        // Master写入当前工作信息到管道
         $process->write(Json::encode($this->works));
     }
 
@@ -263,6 +245,7 @@ class PlatformController extends Controller
     public function execute(\swoole_process $work)
     {
         $pid = $work->pid;
+        // Worker读取Master管道信息
         $receive = $work->read();
         $_works = Json::decode($receive, true);
         if (!isset($_works[$pid])) {
@@ -282,6 +265,7 @@ class PlatformController extends Controller
 
         $exitStatus = $this->runCmd($command, $outFile, $errorFile);
         file_put_contents($outFile, "\nexitStatus:$exitStatus\n", FILE_APPEND);
+        $work->exit();
     }
 
     /**
@@ -295,6 +279,8 @@ class PlatformController extends Controller
         while (($result = \swoole_process::wait(false))) {
             $pid = $result['pid'];
             $exitCode = $result['code'];
+            // 信号函数能直接共享主进程的内容
+            $cmd = $this->works[$pid]['cmd'];
             list($outFile, $errorFile, $statusFile, $reportFile) = $this->getOutputFiles($pid);
 
             // 错误中断日志记录
@@ -311,8 +297,8 @@ class PlatformController extends Controller
             $beginDate = file_get_contents($statusFile);
             $endDate = date("Y-m-d H:i:s");
             $beginTime = strtotime($beginDate);
-            $endMessage = sprintf("%s : 结束 %8s[begin:%s end:%s] %20s 历时:%10s", $pid, '', $beginDate, $endDate, '', $this->getDiffTimeString($beginTime));
-            file_put_contents($outFile, "\n{$endMessage}\n", FILE_APPEND);
+            $endMessage = sprintf("%s : 结束: %8s [begin:%s end:%s] 历时:%s", $pid, $cmd, $beginDate, $endDate, $this->getDiffTimeString($beginTime));
+            file_put_contents($outFile, "{$endMessage}", FILE_APPEND);
 
             // 总报告日志记录
             $content = file_get_contents($errorFile);
@@ -322,10 +308,13 @@ class PlatformController extends Controller
                 $message .= sprintf("%s \n%s\n", $pid, $content);
                 $message .= "---------------error---------------\n";
             }
-            $this->pushMyPidReport(sprintf("%s\n%s\n\n", $message, $endMessage));
+            $this->pushMyPidReport(sprintf("%s\n%s", $message, $endMessage));
 
             // 标识命令执行完毕
             file_put_contents($statusFile, 'done');
+
+            // 释放工作表
+            unset($this->works[$pid]);
         }
     }
 
@@ -355,5 +344,25 @@ class PlatformController extends Controller
             $totalLeft .= sprintf("%02d秒", $diff);
         }
         return $totalLeft;
+    }
+
+    /**
+     * 等待当前工作执行完毕
+     */
+    public function wait()
+    {
+        while (count($this->works)) {
+            sleep(1);
+        }
+    }
+
+    /**
+     * 因程序执行后，不自动回收，故当主进程中无工作状态时，释放主进程资源
+     */
+    public function __destruct()
+    {
+        if (!count($this->works)) {
+            \swoole_process::kill($this->myPid);
+        }
     }
 }
