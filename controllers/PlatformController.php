@@ -178,7 +178,6 @@ class PlatformController extends Controller
     protected function runCmd($command, $outFile, $errorFile)
     {
         $cmd = sprintf("%s >>%s 2>>%s", $command, $outFile, $errorFile);
-        echo $cmd . PHP_EOL;
         $lastLine = system($cmd, $returnValue);
         return $returnValue;
     }
@@ -265,7 +264,6 @@ class PlatformController extends Controller
 
         $exitStatus = $this->runCmd($command, $outFile, $errorFile);
         file_put_contents($outFile, "\nexitStatus:$exitStatus\n", FILE_APPEND);
-        $work->exit();
     }
 
     /**
@@ -273,10 +271,10 @@ class PlatformController extends Controller
      *
      * @param $signo
      */
-    public function finished($signo)
+    public function finished($signo = null)
     {
         // $blocking 参数可以指定是否阻塞等待，默认为阻塞
-        while (($result = \swoole_process::wait(false))) {
+        while ($result = \swoole_process::wait(false)) {
             $pid = $result['pid'];
             $exitCode = $result['code'];
             // 信号函数能直接共享主进程的内容
@@ -315,6 +313,21 @@ class PlatformController extends Controller
 
             // 释放工作表
             unset($this->works[$pid]);
+
+            // 发送邮件
+            $this->mail($pid);
+        }
+
+        // 终止主进程
+        if (!count($this->works)) {
+            // 总报告文件邮件
+            $myPidContent = $this->getFileContent($this->myPidReportFile);
+            if ($myPidContent) {
+                \common\mail\Admin::getInstance()->send('layouts/html', [
+                    'content' => $myPidContent
+                ], '978771018@qq.com', [], $this->myPidReportFile, '跑数总报告');
+            }
+            \swoole_process::kill($this->myPid);
         }
     }
 
@@ -347,22 +360,45 @@ class PlatformController extends Controller
     }
 
     /**
-     * 等待当前工作执行完毕
+     * 最小脚本跑数报告邮件
+     *
+     * @param $pid
      */
-    public function wait()
+    protected function mail($pid)
     {
-        while (count($this->works)) {
-            sleep(1);
+        // 对同一次执行的命令来说,除总报告外，共有4个文件
+        list($outFile, $errorFile, $statusFile, $reportFile) = $this->getOutputFiles($pid);
+        $outContent = $this->getFileContent($outFile);
+        $errorContent = $this->getFileContent($errorFile);
+
+        if ($outContent) {
+            \common\mail\Admin::getInstance()->send('layouts/html', [
+                'content' => $outContent
+            ], '978771018@qq.com', [], $outFile, '跑数输出');
+        }
+        if ($errorContent) {
+            \common\mail\Admin::getInstance()->send('layouts/html', [
+                'content' => $errorContent
+            ], '978771018@qq.com', [], $errorFile, '跑数报错');
         }
     }
 
     /**
-     * 因程序执行后，不自动回收，故当主进程中无工作状态时，释放主进程资源
+     * 根据文件名获得文件内容，如果文件过大，会被截断
+     *
+     * @param $fileName
+     * @return bool|string
      */
-    public function __destruct()
+    protected function getFileContent($fileName)
     {
-        if (!count($this->works)) {
-            \swoole_process::kill($this->myPid);
+        $message = '';
+        if (shell_exec("wc $fileName | awk '{print $1}'") - 300 < 0) {
+            $message = file_get_contents($fileName);
+        } else {
+            $message .= shell_exec("head -n 100 $fileName");
+            $message .= "\n...\n";
+            $message .= shell_exec("tail -n 100 $fileName");
         }
+        return $message;
     }
 }
