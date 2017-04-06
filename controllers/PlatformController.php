@@ -117,6 +117,9 @@ class PlatformController extends Controller
                     $params[] = $param;
                 }
             }
+            if (!count($params)) {
+                throw new Exception(__METHOD__ . ", Line: " . __LINE__ . " Params is empty");
+            }
             $this->currentCommand = $this->execFile . ' ' . $params[0];
             unset($rawParams, $params);
         }

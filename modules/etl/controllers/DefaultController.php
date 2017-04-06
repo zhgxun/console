@@ -15,6 +15,8 @@ class DefaultController extends PlatformController
     public function actionIndex()
     {
         echo __METHOD__ . PHP_EOL;
+        echo __FUNCTION__ . PHP_EOL;
+        echo __CLASS__ . PHP_EOL;
     }
 
     public function actionT()
