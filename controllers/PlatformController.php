@@ -50,6 +50,12 @@ class PlatformController extends Controller
     protected $works = [];
 
     /**
+     * 是否需要发送邮件通知
+     * @var bool
+     */
+    protected $needSendEmail = false;
+
+    /**
      * 初始化日志相关信息
      */
     public function init()
@@ -278,14 +284,15 @@ class PlatformController extends Controller
     {
         // $blocking 参数可以指定是否阻塞等待，默认为阻塞
         while ($result = \swoole_process::wait(false)) {
+            print_r($result);
             $pid = $result['pid'];
-            $exitCode = $result['code'];
+            $exitCode = $result['signal'];
             // 信号函数能直接共享主进程的内容
             $cmd = $this->works[$pid]['cmd'];
             list($outFile, $errorFile, $statusFile, $reportFile) = $this->getOutputFiles($pid);
 
             // 错误中断日志记录
-            if (15 == $exitCode || 143 == $exitCode) {
+            if (in_array($exitCode, [9, 15, 143])) {
                 $tailMessage = "\n\n$pid : 当前进程是被kill掉的\n";
                 $tailMessage .= "--------------tail out-------------\n";
                 $tailMessage .= shell_exec("tail $outFile");
@@ -298,7 +305,7 @@ class PlatformController extends Controller
             $beginDate = file_get_contents($statusFile);
             $endDate = date("Y-m-d H:i:s");
             $beginTime = strtotime($beginDate);
-            $endMessage = sprintf("%s : 结束: %8s [begin:%s end:%s] 历时:%s", $pid, $cmd, $beginDate, $endDate, $this->getDiffTimeString($beginTime));
+            $endMessage = sprintf("%s : 结束: %8s \n[begin:%s end:%s] 历时:%s", $pid, $cmd, $beginDate, $endDate, $this->getDiffTimeString($beginTime));
             file_put_contents($outFile, "{$endMessage}", FILE_APPEND);
 
             // 总报告日志记录
@@ -318,17 +325,21 @@ class PlatformController extends Controller
             unset($this->works[$pid]);
 
             // 发送邮件
-            $this->mail($pid);
+            if ($this->needSendEmail) {
+                $this->mail($pid);
+            }
         }
 
         // 终止主进程
         if (!count($this->works)) {
-            // 总报告文件邮件
-            $myPidContent = $this->getFileContent($this->myPidReportFile);
-            if ($myPidContent) {
-                \common\mail\Admin::getInstance()->send('layouts/html', [
-                    'content' => $myPidContent
-                ], '978771018@qq.com', [], $this->myPidReportFile, '跑数总报告');
+            if ($this->needSendEmail) {
+                // 总报告文件邮件
+                $myPidContent = $this->getFileContent($this->myPidReportFile);
+                if ($myPidContent) {
+                    \common\mail\Admin::getInstance()->send('layouts/html', [
+                        'content' => $myPidContent
+                    ], '978771018@qq.com', [], $this->myPidReportFile, '跑数总报告');
+                }
             }
             \swoole_process::kill($this->myPid);
         }
