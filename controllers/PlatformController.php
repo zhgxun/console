@@ -9,6 +9,13 @@ use yii\helpers\Json;
 /**
  * 跑数平台
  *
+ * error_log()默认在命令重定向中会将输出定位到错误日志输出文件中
+ *
+ * swoole process 文档
+ * @link https://wiki.swoole.com/wiki/page/p-process.html
+ *
+ * @notice 当前操作无法捕捉kill和ctrl+c造成的进程中断信号，但实际工作中，该操作还是希望收到进程被停止的通知
+ *
  * @package console\controllers
  */
 class PlatformController extends Controller
@@ -284,7 +291,6 @@ class PlatformController extends Controller
     {
         // $blocking 参数可以指定是否阻塞等待，默认为阻塞
         while ($result = \swoole_process::wait(false)) {
-            print_r($result);
             $pid = $result['pid'];
             $exitCode = $result['signal'];
             // 信号函数能直接共享主进程的内容
