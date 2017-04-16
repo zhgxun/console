@@ -8,6 +8,6 @@ class DefaultController extends Controller
 {
     public function actionTest()
     {
-        echo "Test";
+        echo "Test\n";
     }
 }

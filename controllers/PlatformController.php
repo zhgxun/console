@@ -2,6 +2,7 @@
 
 namespace console\controllers;
 
+use common\base\Helper;
 use yii\console\Controller;
 use yii\console\Exception;
 use yii\helpers\Json;
@@ -156,7 +157,6 @@ class PlatformController extends Controller
         $ip = \common\base\Helper::getInstance()->getLocalIp();
         $whoami = exec("whoami");
         $branch = exec("git branch");
-        //$version = exec("git var -l | grep $branch | awk '{print $2}'");
         $version = exec("git branch -v");
         file_put_contents($this->myPidReportFile, sprintf("当前机器: %s    当前用户: %s    当前代码分支: %s@%s\n当前引导命令: %s\n运行日志目录: %s\n\n",
             $ip, $whoami, $branch, $version, $this->currentCommand, $this->outputDirectory));
@@ -194,7 +194,7 @@ class PlatformController extends Controller
     protected function runCmd($command, $outFile, $errorFile)
     {
         $cmd = sprintf("%s >>%s 2>>%s", $command, $outFile, $errorFile);
-        $lastLine = system($cmd, $returnValue);
+        $lastLine = exec($cmd, $output, $returnValue);
         return $returnValue;
     }
 
@@ -297,21 +297,11 @@ class PlatformController extends Controller
             $cmd = $this->works[$pid]['cmd'];
             list($outFile, $errorFile, $statusFile, $reportFile) = $this->getOutputFiles($pid);
 
-            // 错误中断日志记录
-            if (in_array($exitCode, [9, 15, 143])) {
-                $tailMessage = "\n\n$pid : 当前进程是被kill掉的\n";
-                $tailMessage .= "--------------tail out-------------\n";
-                $tailMessage .= shell_exec("tail $outFile");
-                $tailMessage .= "--------------tail out-------------\n";
-                $tailMessage .= "\n";
-                file_put_contents($errorFile, $tailMessage, FILE_APPEND);
-            }
-
             // 输出日志记录
             $beginDate = file_get_contents($statusFile);
             $endDate = date("Y-m-d H:i:s");
             $beginTime = strtotime($beginDate);
-            $endMessage = sprintf("%s : 结束: %8s \n[begin:%s end:%s] 历时:%s", $pid, $cmd, $beginDate, $endDate, $this->getDiffTimeString($beginTime));
+            $endMessage = sprintf("%s : 结束: \"%8s\" \n[begin:%s end:%s] 历时:%s", $pid, $cmd, $beginDate, $endDate, $this->getDiffTimeString($beginTime));
             file_put_contents($outFile, "{$endMessage}", FILE_APPEND);
 
             // 总报告日志记录
@@ -420,5 +410,13 @@ class PlatformController extends Controller
             $message .= shell_exec("tail -n 100 $fileName");
         }
         return $message;
+    }
+
+    /**
+     * 等待当前工作全部执行完毕
+     */
+    public function wait()
+    {
+        $this->finished();
     }
 }
