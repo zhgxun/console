@@ -8,6 +8,9 @@ class DefaultController extends Controller
 {
     public function actionTest()
     {
-        echo "Test\n";
+        while (true) {
+            echo "Test\n";
+            sleep(30);
+        }
     }
 }

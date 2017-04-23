@@ -2,7 +2,6 @@
 
 namespace console\controllers;
 
-use common\base\Helper;
 use yii\console\Controller;
 use yii\console\Exception;
 use yii\helpers\Json;
@@ -84,7 +83,13 @@ class PlatformController extends Controller
         // 当前进程总报告
         $this->initMyPidReport();
 
-        // 注册信号处理函数，处理子进程结束时的回收工作
+        // 2) SIGINT 程序终止(interrupt)信号, 在用户键入INTR字符(通常是Ctrl-C)时发出，用于通知前台进程组终止进程。
+        \swoole_process::signal(SIGINT, [$this, 'finished']);
+        // 9) SIGKILL 用来立即结束程序的运行. 本信号不能被阻塞、处理和忽略。如果管理员发现某个进程终止不了，可尝试发送这个信号
+        \swoole_process::signal(SIGKILL, [$this, 'finished']);
+        // 15) SIGTERM 程序结束(terminate)信号, 与SIGKILL不同的是该信号可以被阻塞和处理。通常用来要求程序自己正常退出，shell命令kill缺省产生这个信号。如果进程终止不了，我们才会尝试SIGKILL
+        \swoole_process::signal(SIGTERM, [$this, 'finished']);
+        // 17) SIGCHLD 子进程结束时, 父进程会收到这个信号
         \swoole_process::signal(SIGCHLD, [$this, 'finished']);
     }
 
@@ -297,6 +302,27 @@ class PlatformController extends Controller
             $cmd = $this->works[$pid]['cmd'];
             list($outFile, $errorFile, $statusFile, $reportFile) = $this->getOutputFiles($pid);
 
+            // 处理错误信息
+            $interrupt = '';
+            switch ($exitCode) {
+                case 2:
+                    $interrupt .= "该进程通常是Ctrl-C结束的\n";
+                    break;
+                case 9:
+                    $interrupt .= "该进程是被kill掉的\n";
+                    break;
+                case 15:
+                    $interrupt .= "程序结束(terminate)信号\n";
+                    break;
+                // 子进程结束时, 父进程会收到这个信号
+                case 17:
+                default:
+            }
+            if ($interrupt) {
+                file_put_contents($errorFile, $interrupt, FILE_APPEND);
+            }
+            unset($interrupt);
+
             // 输出日志记录
             $beginDate = file_get_contents($statusFile);
             $endDate = date("Y-m-d H:i:s");
@@ -309,7 +335,7 @@ class PlatformController extends Controller
             $message = '';
             if (!empty($content)) {
                 $message .= "---------------error---------------\n";
-                $message .= sprintf("%s \n%s\n", $pid, $content);
+                $message .= sprintf("pid: %s \n%s\n", $pid, $content);
                 $message .= "---------------error---------------\n";
             }
             $this->pushMyPidReport(sprintf("%s\n%s", $message, $endMessage));
