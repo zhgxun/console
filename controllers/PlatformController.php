@@ -2,6 +2,7 @@
 
 namespace console\controllers;
 
+use common\base\PidStatus;
 use yii\console\Controller;
 use yii\console\Exception;
 use yii\helpers\Json;
@@ -31,6 +32,12 @@ class PlatformController extends Controller
      * @var null
      */
     protected $myPid = null;
+
+    /**
+     * 设置每一个启动进程的PID文件，kill时使用
+     * @var null
+     */
+    protected $myPidStatusFile = null;
 
     /**
      * 设置可执行文件名称，默认为框架入口脚本yii
@@ -77,20 +84,23 @@ class PlatformController extends Controller
         // 设置当前运行的命令名称
         $this->setCurrentCommand();
 
+        // 设置进程文件
+        $this->setPidFile();
+
         // 设置当前进程日志保存文件
         $this->setMyPidReportFile();
 
         // 当前进程总报告
         $this->initMyPidReport();
 
-        // 2) SIGINT 程序终止(interrupt)信号, 在用户键入INTR字符(通常是Ctrl-C)时发出，用于通知前台进程组终止进程。
-        \swoole_process::signal(SIGINT, [$this, 'finished']);
-        // 9) SIGKILL 用来立即结束程序的运行. 本信号不能被阻塞、处理和忽略。如果管理员发现某个进程终止不了，可尝试发送这个信号
-        \swoole_process::signal(SIGKILL, [$this, 'finished']);
-        // 15) SIGTERM 程序结束(terminate)信号, 与SIGKILL不同的是该信号可以被阻塞和处理。通常用来要求程序自己正常退出，shell命令kill缺省产生这个信号。如果进程终止不了，我们才会尝试SIGKILL
-        \swoole_process::signal(SIGTERM, [$this, 'finished']);
         // 17) SIGCHLD 子进程结束时, 父进程会收到这个信号
         \swoole_process::signal(SIGCHLD, [$this, 'finished']);
+        // 2) SIGINT 程序终止(interrupt)信号, 在用户键入INTR字符(通常是Ctrl-C)时发出，用于通知前台进程组终止进程。
+//        \swoole_process::signal(SIGINT, [$this, 'finished']);
+        // 9) SIGKILL 用来立即结束程序的运行. 本信号不能被阻塞、处理和忽略。如果管理员发现某个进程终止不了，可尝试发送这个信号
+//        \swoole_process::signal(SIGKILL, [$this, 'finished']);
+        // 15) SIGTERM 程序结束(terminate)信号, 与SIGKILL不同的是该信号可以被阻塞和处理。通常用来要求程序自己正常退出，shell命令kill缺省产生这个信号。如果进程终止不了，我们才会尝试SIGKILL
+//        \swoole_process::signal(SIGTERM, [$this, 'finished']);
     }
 
     /**
@@ -142,6 +152,16 @@ class PlatformController extends Controller
             $this->currentCommand = $this->execFile . ' ' . $params[0];
             unset($rawParams, $params);
         }
+    }
+
+    /**
+     * 保存进程记录
+     */
+    protected function setPidFile()
+    {
+        $path = dirname($this->outputDirectory);
+        $this->myPidStatusFile = "{$path}/_pid_status.txt";
+        PidStatus::write($this->myPid, $this->currentCommand, $this->myPidStatusFile);
     }
 
     /**
@@ -285,6 +305,8 @@ class PlatformController extends Controller
 
         $exitStatus = $this->runCmd($command, $outFile, $errorFile);
         file_put_contents($outFile, "\nexitStatus:$exitStatus\n", FILE_APPEND);
+
+        $work->close();
     }
 
     /**
@@ -296,6 +318,8 @@ class PlatformController extends Controller
     {
         // $blocking 参数可以指定是否阻塞等待，默认为阻塞
         while ($result = \swoole_process::wait(false)) {
+            echo "---------\n";
+            print_r($result);
             $pid = $result['pid'];
             $exitCode = $result['signal'];
             // 信号函数能直接共享主进程的内容
@@ -363,8 +387,19 @@ class PlatformController extends Controller
                     ], '978771018@qq.com', [], $this->myPidReportFile, '跑数总报告');
                 }
             }
-            \swoole_process::kill($this->myPid);
+            $this->kill($this->myPid);
         }
+    }
+
+    /**
+     * 结束进程
+     *
+     * @param $pid
+     */
+    protected function kill($pid)
+    {
+        PidStatus::delete($pid, $this->myPidStatusFile);
+        \swoole_process::kill($pid);
     }
 
     /**

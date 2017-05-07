@@ -8,9 +8,9 @@ class DefaultController extends Controller
 {
     public function actionTest()
     {
-        while (true) {
+        $i = 100;
+        while ($i--) {
             echo "Test\n";
-            sleep(30);
         }
     }
 }
