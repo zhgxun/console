@@ -318,8 +318,6 @@ class PlatformController extends Controller
     {
         // $blocking 参数可以指定是否阻塞等待，默认为阻塞
         while ($result = \swoole_process::wait(false)) {
-            echo "---------\n";
-            print_r($result);
             $pid = $result['pid'];
             $exitCode = $result['signal'];
             // 信号函数能直接共享主进程的内容

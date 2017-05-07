@@ -12,5 +12,6 @@ class DefaultController extends PlatformController
     public function actionTest()
     {
         $this->addRun('default/test');
+        $this->addRun('default/test1');
     }
 }
